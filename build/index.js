@@ -3,7 +3,6 @@ export const getIsPlaying = () => ToneGeneratorModule.getIsPlaying();
 export const playWhiteNoise = () => ToneGeneratorModule.playWhiteNoise();
 export const playPinkNoise = () => ToneGeneratorModule.playPinkNoise();
 export const playBrownNoise = () => ToneGeneratorModule.playBrownNoise();
-export const setWhiteNoisePitch = async (pitch) => ToneGeneratorModule.setWhiteNoisePitch(pitch);
 export const setWhiteNoiseAmplitude = async (amplitude) => ToneGeneratorModule.setWhiteNoiseAmplitude(amplitude);
 export const playSoundFromURL = (URL) => ToneGeneratorModule.playSoundFromURL(URL);
 export const stopSoundFromURL = (URL) => ToneGeneratorModule.stopSoundFromURL(URL);

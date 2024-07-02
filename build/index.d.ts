@@ -2,7 +2,6 @@ export declare const getIsPlaying: () => any;
 export declare const playWhiteNoise: () => any;
 export declare const playPinkNoise: () => any;
 export declare const playBrownNoise: () => any;
-export declare const setWhiteNoisePitch: (pitch: number) => Promise<any>;
 export declare const setWhiteNoiseAmplitude: (amplitude: number) => Promise<any>;
 export declare const playSoundFromURL: (URL: string) => any;
 export declare const stopSoundFromURL: (URL: string) => any;
