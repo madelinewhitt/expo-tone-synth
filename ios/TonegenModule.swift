@@ -7,6 +7,7 @@ public class ToneGenerator {
     private let audioEngine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private let pitchNode = AVAudioUnitTimePitch()
+    var eqNode = AVAudioUnitEQ(numberOfBands: 1)
     private var audioPlayers: [AVAudioPlayer] = []
     private var urlToPlayerMap: [URL: AVAudioPlayer] = [:]
     private var buffer: AVAudioPCMBuffer?
@@ -15,30 +16,6 @@ public class ToneGenerator {
 
     public func getIsPlaying() -> Bool {
         return isPlaying
-    }
-
-    public func play(frequency: Double, amplitudes: [Double] = [1.0], adsr: ADSR? = nil) {
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 11025.0, channels: 1),
-              let buffer = createBuffer(frequency: frequency, amplitudes: amplitudes, format: format, adsr: adsr) else {
-            fatalError("Unable to create AVAudioFormat or AVAudioPCMBuffer objects")
-        }
-
-        self.buffer = buffer
-
-        audioEngine.attach(playerNode)
-        audioEngine.attach(pitchNode)
-        audioEngine.connect(playerNode, to: pitchNode, format: format)
-        audioEngine.connect(pitchNode, to: audioEngine.mainMixerNode, format: format)
-
-        playerNode.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
-
-        do {
-            try audioEngine.start()
-            playerNode.play()
-            isPlaying = true
-        } catch {
-            fatalError("Unable to start AVAudioEngine: \(error.localizedDescription)")
-        }
     }
 
     public func playWhiteNoise() {
@@ -63,9 +40,13 @@ public class ToneGenerator {
         self.buffer = buffer
 
         audioEngine.attach(playerNode)
-        audioEngine.attach(pitchNode)
-        audioEngine.connect(playerNode, to: pitchNode, format: format)
-        audioEngine.connect(pitchNode, to: audioEngine.mainMixerNode, format: format)
+        eqNode.globalGain = 0
+        eqNode.bands[0].filterType = .lowPass
+        eqNode.bands[0].frequency = 20.0 // Default frequency, can be adjusted, preferably at 0 
+        eqNode.bands[0].bypass = false
+        audioEngine.attach(eqNode)
+        audioEngine.connect(playerNode, to: eqNode, format: format)
+        audioEngine.connect(eqNode, to: audioEngine.mainMixerNode, format: format)
 
         playerNode.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
 
@@ -78,157 +59,13 @@ public class ToneGenerator {
         }
     }
 
-    public func playBrownNoise() {
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 11025.0, channels: 1) else {
-            fatalError("Unable to create AVAudioFormat object")
-        }
-
-        let frameLength = AVAudioFrameCount(format.sampleRate * 2) // 2 seconds of brown noise
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else {
-            fatalError("Unable to create AVAudioPCMBuffer object")
-        }
-
-        guard let floatChannelData = buffer.floatChannelData else {
-            fatalError("Unable to access floatChannelData")
-        }
-
-        var lastOutput: Float = 0.0
-        for frame in 0..<Int(frameLength) {
-            let whiteNoise = Float.random(in: -1.0...1.0)
-            floatChannelData[0][frame] = lastOutput + (0.02 * whiteNoise)
-            lastOutput = floatChannelData[0][frame]
-            // Scale to keep within [-1.0, 1.0] range
-            floatChannelData[0][frame] *= 0.5
-        }
-
-        buffer.frameLength = frameLength
-        self.buffer = buffer
-
-        audioEngine.attach(playerNode)
-        audioEngine.attach(pitchNode)
-        audioEngine.connect(playerNode, to: pitchNode, format: format)
-        audioEngine.connect(pitchNode, to: audioEngine.mainMixerNode, format: format)
-
-        playerNode.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
-
-        do {
-            try audioEngine.start()
-            playerNode.play()
-            isPlaying = true
-        } catch {
-            fatalError("Unable to start AVAudioEngine: \(error.localizedDescription)")
-        }
+    public func adjustFrequency(frequency: Float) {
+        print("Adjusting frequency to \(frequency) Hz")
+        eqNode.bands[0].frequency = frequency
     }
 
-    public func playPinkNoise() {
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 11025.0, channels: 1) else {
-            fatalError("Unable to create AVAudioFormat object")
-        }
 
-        let frameLength = AVAudioFrameCount(format.sampleRate * 2) // 2 seconds of pink noise
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else {
-            fatalError("Unable to create AVAudioPCMBuffer object")
-        }
-
-        guard let floatChannelData = buffer.floatChannelData else {
-            fatalError("Unable to access floatChannelData")
-        }
-
-        var b: [Float] = [0, 0, 0, 0, 0, 0, 0]
-        for frame in 0..<Int(frameLength) {
-            let whiteNoise = Float.random(in: -1.0...1.0)
-            b[0] = 0.99886 * b[0] + whiteNoise * 0.0555179
-            b[1] = 0.99332 * b[1] + whiteNoise * 0.0750759
-            b[2] = 0.96900 * b[2] + whiteNoise * 0.1538520
-            b[3] = 0.86650 * b[3] + whiteNoise * 0.3104856
-            b[4] = 0.55000 * b[4] + whiteNoise * 0.5329522
-            b[5] = -0.7616 * b[5] - whiteNoise * 0.0168980
-            floatChannelData[0][frame] = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + whiteNoise * 0.5362
-            // make a new sample app where these knobs are adjustable 
-            floatChannelData[0][frame] *= 0.11  // approximate gain normalization
-            b[6] = whiteNoise * 0.115926
-            floatChannelData[0][frame] = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + whiteNoise * 0.5362
-            // Adjusting gain normalization to match new coefficients
-            floatChannelData[0][frame] *= 0.15  // approximate gain normalization
-            b[6] = whiteNoise * 0.115926
-        }
-
-        buffer.frameLength = frameLength
-        self.buffer = buffer
-
-        audioEngine.attach(playerNode)
-        audioEngine.attach(pitchNode)
-        audioEngine.connect(playerNode, to: pitchNode, format: format)
-        audioEngine.connect(pitchNode, to: audioEngine.mainMixerNode, format: format)
-
-        playerNode.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
-
-        do {
-            try audioEngine.start()
-            playerNode.play()
-            isPlaying = true
-        } catch {
-            fatalError("Unable to start AVAudioEngine: \(error.localizedDescription)")
-        }
-    }
-
-    public func changePitch(pitch: Float) {
-        print("Changing pitch to \(pitch)")
-        pitchNode.pitch = pitch
-    }
-
-    public func pinkNoiseTest(coefficient1: Float, coefficient2: Float, coefficient3: Float, coefficient4: Float, 
-    coefficient5: Float, coefficient6: Float, pitch: Float) {
-
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 11025.0, channels: 1) else {
-            fatalError("Unable to create AVAudioFormat object")
-        }
-
-        let frameLength = AVAudioFrameCount(format.sampleRate * 2) // 2 seconds of pink noise
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else {
-            fatalError("Unable to create AVAudioPCMBuffer object")
-        }
-
-        guard let floatChannelData = buffer.floatChannelData else {
-            fatalError("Unable to access floatChannelData")
-        }
-
-        var b: [Float] = [0, 0, 0, 0, 0, 0, 0]
-        for frame in 0..<Int(frameLength) {
-            let whiteNoise = Float.random(in: -1.0...1.0)
-            b[0] = coefficient1 * b[0] + whiteNoise * 0.0555179
-            b[1] = coefficient2 * b[1] + whiteNoise * 0.0750759
-            b[2] = coefficient3 * b[2] + whiteNoise * 0.1538520
-            b[3] = coefficient4 * b[3] + whiteNoise * 0.3104856
-            b[4] = coefficient5 * b[4] + whiteNoise * 0.5329522
-            b[5] = coefficient6 * b[5] - whiteNoise * 0.0168980
-            floatChannelData[0][frame] = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + whiteNoise * 0.5362
-            // Adjusting gain normalization to match new coefficients
-            floatChannelData[0][frame] *= 0.15  // approximate gain normalization
-            b[6] = whiteNoise * 0.115926
-        }
-
-        buffer.frameLength = frameLength
-        self.buffer = buffer
-
-        audioEngine.attach(playerNode)
-        let pitchNode = AVAudioUnitTimePitch()
-        pitchNode.pitch = pitch
-        audioEngine.attach(pitchNode)
-        audioEngine.connect(playerNode, to: pitchNode, format: format)
-        audioEngine.connect(pitchNode, to: audioEngine.mainMixerNode, format: format)
-
-        playerNode.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
-
-        do {
-            try audioEngine.start()
-            playerNode.play()
-            isPlaying = true
-        } catch {
-            fatalError("Unable to start AVAudioEngine: \(error.localizedDescription)")
-        }
-    }
-
+    // Stops all sounds from playing simultaneously 
     public func stop() {
         playerNode.stop()
         audioEngine.stop()
@@ -242,10 +79,7 @@ public class ToneGenerator {
         isPlaying = false
     }
 
-    public func setWhiteNoiseAmplitude(amplitude: Float) {
-        playerNode.volume = amplitude
-    }
-
+    // IP: would like this to set the white noise frequency 
     public func setFrequency(frequency: Double, amplitudes: [Double] = [1.0], adsr: ADSR? = nil) {
         guard let format = buffer?.format,
               let buffer = createBuffer(frequency: frequency, amplitudes: amplitudes, format: format, adsr: adsr) else {
@@ -258,6 +92,7 @@ public class ToneGenerator {
         playerNode.play()
     }
 
+    // This takes a url and plays a corresponding sound 
     public func playSoundFromURL(from url: URL) {
         let session = URLSession(configuration: .default)
         
@@ -267,7 +102,8 @@ public class ToneGenerator {
                 do {
                     let data = try Data(contentsOf: location)
                     let audioPlayer = try AVAudioPlayer(data: data)
-                    audioPlayer.numberOfLoops = -1 // Set to loop indefinitely
+                    // This loops forever until you tell it not to 
+                    audioPlayer.numberOfLoops = -1 
                     audioPlayer.prepareToPlay()
                     audioPlayer.play()
                     self.audioPlayers.append(audioPlayer)
@@ -283,6 +119,7 @@ public class ToneGenerator {
         downloadTask.resume()
     }
 
+    // Maps the url accepted to the corresponding sound playing and stops it 
     public func stopSoundFromURL(from url: URL) {
         if let audioPlayer = urlToPlayerMap[url] {
             audioPlayer.stop()
@@ -297,6 +134,7 @@ public class ToneGenerator {
         }
     }
 
+    // Adjusts URL volume, accepts a url and a float to adjust the volume accordingly 
     public func setVolumeForURL(from url: URL, amplitude: Float) {
         if let audioPlayer = urlToPlayerMap[url] {
             audioPlayer.volume = amplitude
@@ -305,45 +143,47 @@ public class ToneGenerator {
         }
     }
 
-    public func performFFT() -> [Float] {
-        guard let buffer = self.buffer, let floatChannelData = buffer.floatChannelData else {
-            fatalError("Buffer or floatChannelData is nil")
-        }
+    // This doesn't work, but it's a function that is supposed to perform an FFT and return
+    // an array of floats that can then be graphed in the front-end component 
+    // public func performFFT() -> [Float] {
+    //     guard let buffer = self.buffer, let floatChannelData = buffer.floatChannelData else {
+    //         fatalError("Buffer or floatChannelData is nil")
+    //     }
 
-        let frameLength = Int(buffer.frameLength)
+    //     let frameLength = Int(buffer.frameLength)
         
-        guard frameLength.isPowerOf2 else {
-            fatalError("Frame length must be a power of 2")
-        }
+    //     guard frameLength.isPowerOf2 else {
+    //         fatalError("Frame length must be a power of 2")
+    //     }
         
-        let log2n = UInt(log2(Double(frameLength)))
-        guard let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
-            fatalError("FFT setup failed")
-        }
+    //     let log2n = UInt(log2(Double(frameLength)))
+    //     guard let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
+    //         fatalError("FFT setup failed")
+    //     }
 
-        var realp = [Float](repeating: 0.0, count: frameLength / 2)
-        var imagp = [Float](repeating: 0.0, count: frameLength / 2)
+    //     var realp = [Float](repeating: 0.0, count: frameLength / 2)
+    //     var imagp = [Float](repeating: 0.0, count: frameLength / 2)
 
-        var complexBuffer = [DSPComplex](repeating: DSPComplex(real: 0.0, imag: 0.0), count: frameLength / 2)
+    //     var complexBuffer = [DSPComplex](repeating: DSPComplex(real: 0.0, imag: 0.0), count: frameLength / 2)
 
-        for i in 0..<frameLength / 2 {
-            complexBuffer[i] = DSPComplex(real: floatChannelData[0][i * 2], imag: floatChannelData[0][i * 2 + 1])
-        }
+    //     for i in 0..<frameLength / 2 {
+    //         complexBuffer[i] = DSPComplex(real: floatChannelData[0][i * 2], imag: floatChannelData[0][i * 2 + 1])
+    //     }
 
-        var splitComplex = DSPSplitComplex(realp: &realp, imagp: &imagp)
-        complexBuffer.withUnsafeBufferPointer { pointer in
-            vDSP_ctoz(pointer.baseAddress!, 2, &splitComplex, 1, vDSP_Length(frameLength / 2))
-        }
+    //     var splitComplex = DSPSplitComplex(realp: &realp, imagp: &imagp)
+    //     complexBuffer.withUnsafeBufferPointer { pointer in
+    //         vDSP_ctoz(pointer.baseAddress!, 2, &splitComplex, 1, vDSP_Length(frameLength / 2))
+    //     }
 
-        vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
+    //     vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
 
-        var magnitudes = [Float](repeating: 0.0, count: frameLength / 2)
-        vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(frameLength / 2))
+    //     var magnitudes = [Float](repeating: 0.0, count: frameLength / 2)
+    //     vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(frameLength / 2))
 
-        vDSP_destroy_fftsetup(fftSetup)
+    //     vDSP_destroy_fftsetup(fftSetup)
 
-        return magnitudes.map { sqrt($0) }
-    }
+    //     return magnitudes.map { sqrt($0) }
+    // }
 
     private func createBuffer(frequency: Double, amplitudes: [Double], format: AVAudioFormat, adsr: ADSR? = nil) -> AVAudioPCMBuffer? {
         let sampleRate = format.sampleRate
@@ -456,40 +296,16 @@ public class ToneGeneratorModule: Module {
             return toneGenerator.getIsPlaying()
         }
 
-        AsyncFunction("play") { (frequency: Double, amplitudes: [Double], adsr: [Double]) in
-            let adsrEnvelope = ADSR(attack: adsr[0], decay: adsr[1], sustain: adsr[2], release: adsr[3])
-            toneGenerator.play(frequency: frequency, amplitudes: amplitudes, adsr: adsrEnvelope)
-        }
-
         AsyncFunction("playWhiteNoise") { () in
             toneGenerator.playWhiteNoise()
         }
 
-        AsyncFunction("playBrownNoise") { () in
-            toneGenerator.playBrownNoise()
-        }
-
-        AsyncFunction("playPinkNoise") { () in
-            toneGenerator.playPinkNoise()
-        }
-
-        AsyncFunction("changePitch") { (pitch: Float) in
-            toneGenerator.changePitch(pitch: pitch)
-        }
-
-        AsyncFunction("pinkNoiseTest") { (coefficient1: Float, coefficient2: Float, coefficient3: Float, coefficient4: Float, 
-        coefficient5: Float, coefficient6: Float, pitch: Float) in 
-            toneGenerator.pinkNoiseTest(coefficient1: coefficient1, coefficient2: coefficient2, coefficient3: coefficient3,
-            coefficient4: coefficient4, coefficient5: coefficient5, coefficient6: coefficient6, pitch: pitch)
+        AsyncFunction("adjustFrequency") { (frequency: Float) in
+            toneGenerator.adjustFrequency(frequency: frequency)
         }
 
         AsyncFunction("stop") { () in
             toneGenerator.stop()
-        }
-
-        AsyncFunction("setFrequency") { (frequency: Double, amplitudes: [Double], adsr: [Double]) in
-            let adsrEnvelope = ADSR(attack: adsr[0], decay: adsr[1], sustain: adsr[2], release: adsr[3])
-            toneGenerator.setFrequency(frequency: frequency, amplitudes: amplitudes, adsr: adsrEnvelope)
         }
 
         AsyncFunction("setWhiteNoiseAmplitude") { (amplitude: Float) in
@@ -508,8 +324,8 @@ public class ToneGeneratorModule: Module {
             toneGenerator.setVolumeForURL(from: url, amplitude: amplitude)
         }
 
-        AsyncFunction("performFFT") { () in 
-            toneGenerator.performFFT() 
-        }
+        // AsyncFunction("performFFT") { () in 
+        //     toneGenerator.performFFT() 
+        // }
     }
 }
