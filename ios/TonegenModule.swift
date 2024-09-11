@@ -1,7 +1,22 @@
 import ExpoModulesCore
 import AVFoundation
 import UIKit
+import Foundation
 import Accelerate
+
+// Classes for saving states:
+struct URLSound: Codable {
+    var url: URL
+    var volume: Float
+}
+
+struct SoundPreset: Codable {
+    var isWhiteNoise: Bool
+    var frequency: Double?
+    var volume: Float
+    var urlSounds: [URLSound]
+    var eqFrequency: Float
+}
 
 public class ToneGenerator {
     private let audioEngine = AVAudioEngine()
@@ -18,18 +33,50 @@ public class ToneGenerator {
         return isPlaying
     }
 
+    public struct URLSound: Codable {
+        var url: URL
+        var volume: Float
+    }
+
+    public struct SoundPreset: Codable {
+        var isWhiteNoise: Bool
+        var frequency: Double?
+        var volume: Float
+        var urlSounds: [URLSound]
+        var eqFrequency: Float
+    }
+
     public func playWhiteNoise() {
+        if let buffer = self.buffer, isPlaying == false {
+            // If paused, resume playback of white noise
+            playerNode.play()
+
+            // Resume playback of all paused sounds from URLs
+            for audioPlayer in audioPlayers {
+                if !audioPlayer.isPlaying {
+                    audioPlayer.play()
+                }
+            }
+
+            isPlaying = true
+            return
+        }
+        
+        // Otherwise, start white noise from the beginning
         guard let format = AVAudioFormat(standardFormatWithSampleRate: 11025.0, channels: 1) else {
-            fatalError("Unable to create AVAudioFormat object")
+            print("Unable to create AVAudioFormat object")
+            return
         }
 
         let frameLength = AVAudioFrameCount(format.sampleRate * 2) // 2 seconds of white noise
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else {
-            fatalError("Unable to create AVAudioPCMBuffer object")
+            print("Unable to create AVAudioPCMBuffer object")
+            return
         }
 
         guard let floatChannelData = buffer.floatChannelData else {
-            fatalError("Unable to access floatChannelData")
+            print("Unable to access floatChannelData")
+            return
         }
 
         for frame in 0..<Int(frameLength) {
@@ -39,12 +86,18 @@ public class ToneGenerator {
         buffer.frameLength = frameLength
         self.buffer = buffer
 
-        audioEngine.attach(playerNode)
-        eqNode.globalGain = 0
-        eqNode.bands[0].filterType = .lowPass
-        eqNode.bands[0].frequency = 20.0 // Default frequency, can be adjusted, preferably at 0 
-        eqNode.bands[0].bypass = false
-        audioEngine.attach(eqNode)
+        if !audioEngine.attachedNodes.contains(playerNode) {
+            audioEngine.attach(playerNode)
+        }
+        
+        if !audioEngine.attachedNodes.contains(eqNode) {
+            eqNode.globalGain = 0
+            eqNode.bands[0].filterType = .lowPass
+            eqNode.bands[0].frequency = 20.0 // Default frequency, can be adjusted, preferably at 0 
+            eqNode.bands[0].bypass = false
+            audioEngine.attach(eqNode)
+        }
+
         audioEngine.connect(playerNode, to: eqNode, format: format)
         audioEngine.connect(eqNode, to: audioEngine.mainMixerNode, format: format)
 
@@ -53,17 +106,46 @@ public class ToneGenerator {
         do {
             try audioEngine.start()
             playerNode.play()
+
+            // Play all sounds from URLs that were previously playing
+            for audioPlayer in audioPlayers {
+                if !audioPlayer.isPlaying {
+                    audioPlayer.play()
+                }
+            }
+
             isPlaying = true
         } catch {
-            fatalError("Unable to start AVAudioEngine: \(error.localizedDescription)")
+            print("Unable to start AVAudioEngine: \(error.localizedDescription)")
         }
     }
+
+
+    public func pause() {
+        if isPlaying {
+            // Pause the white noise
+            playerNode.pause()
+
+            // Pause all sounds playing from URLs
+            for audioPlayer in audioPlayers {
+                if audioPlayer.isPlaying {
+                    audioPlayer.pause()
+                }
+            }
+
+            isPlaying = false
+        }
+    }
+
 
     public func adjustFrequency(frequency: Float) {
         print("Adjusting frequency to \(frequency) Hz")
         eqNode.bands[0].frequency = frequency
     }
 
+    public func adjustWhiteNoiseVolume(volume: Float) {
+        playerNode.volume = volume
+    }
 
     // Stops all sounds from playing simultaneously 
     public func stop() {
@@ -143,47 +225,64 @@ public class ToneGenerator {
         }
     }
 
-    // This doesn't work, but it's a function that is supposed to perform an FFT and return
-    // an array of floats that can then be graphed in the front-end component 
-    // public func performFFT() -> [Float] {
-    //     guard let buffer = self.buffer, let floatChannelData = buffer.floatChannelData else {
-    //         fatalError("Buffer or floatChannelData is nil")
+    public func adjustMasterVolume(volume: Float) {
+        // Adjust the volume for the white noise
+        playerNode.volume = volume
+
+        // Adjust the volume for all other sounds playing from URLs
+        for audioPlayer in audioPlayers {
+            audioPlayer.volume = volume
+        }
+    }
+
+    public func checkIfSoundLibraryIsPlaying() -> Bool {
+        // Check if white noise is playing
+        if isPlaying {
+            return true
+        }
+
+        // Check if any sound from URL is playing
+        for audioPlayer in audioPlayers {
+            if audioPlayer.isPlaying {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    public func saveSoundToFile() -> URL? {
+        guard let buffer = self.buffer else { return nil }
+
+        let outputFileURL = getDocumentsDirectory().appendingPathComponent("savedSound.caf")
+
+        let audioFile: AVAudioFile
+        do {
+            audioFile = try AVAudioFile(forWriting: outputFileURL, settings: buffer.format.settings)
+            try audioFile.write(from: buffer)
+            print("Sound saved to \(outputFileURL)")
+            return outputFileURL
+        } catch {
+            print("Error saving sound: \(error)")
+            return nil
+        }
+    }
+
+    // fix this 
+    // public func playSoundFromFile(url: URL) -> Void {
+    //     let url = URL(fileURLWithPath: URL)
+    //     do {
+    //         let audioPlayer = try AVAudioPlayer(contentsOf: url)
+    //         audioPlayer.play()
+    //     } catch {
+    //         print("Error playing sound from file: \(error)")
     //     }
-
-    //     let frameLength = Int(buffer.frameLength)
-        
-    //     guard frameLength.isPowerOf2 else {
-    //         fatalError("Frame length must be a power of 2")
-    //     }
-        
-    //     let log2n = UInt(log2(Double(frameLength)))
-    //     guard let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
-    //         fatalError("FFT setup failed")
-    //     }
-
-    //     var realp = [Float](repeating: 0.0, count: frameLength / 2)
-    //     var imagp = [Float](repeating: 0.0, count: frameLength / 2)
-
-    //     var complexBuffer = [DSPComplex](repeating: DSPComplex(real: 0.0, imag: 0.0), count: frameLength / 2)
-
-    //     for i in 0..<frameLength / 2 {
-    //         complexBuffer[i] = DSPComplex(real: floatChannelData[0][i * 2], imag: floatChannelData[0][i * 2 + 1])
-    //     }
-
-    //     var splitComplex = DSPSplitComplex(realp: &realp, imagp: &imagp)
-    //     complexBuffer.withUnsafeBufferPointer { pointer in
-    //         vDSP_ctoz(pointer.baseAddress!, 2, &splitComplex, 1, vDSP_Length(frameLength / 2))
-    //     }
-
-    //     vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
-
-    //     var magnitudes = [Float](repeating: 0.0, count: frameLength / 2)
-    //     vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(frameLength / 2))
-
-    //     vDSP_destroy_fftsetup(fftSetup)
-
-    //     return magnitudes.map { sqrt($0) }
     // }
+
+    private func getDocumentsDirectory() -> URL {
+        let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+        return paths[0]
+    }
 
     private func createBuffer(frequency: Double, amplitudes: [Double], format: AVAudioFormat, adsr: ADSR? = nil) -> AVAudioPCMBuffer? {
         let sampleRate = format.sampleRate
@@ -270,6 +369,85 @@ public class ToneGenerator {
             floatChannelData[0][frame] *= amplitude
         }
     }
+
+    public func saveCurrentSoundPreset() -> SoundPreset {
+        // Capture the state of URL-based sounds that are playing
+        let urlSounds = audioPlayers.map { audioPlayer in
+            return URLSound(url: audioPlayer.url!, volume: audioPlayer.volume)
+        }
+
+        // Capture the current state of the white noise (if playing)
+        let preset = SoundPreset(
+            isWhiteNoise: buffer != nil,  // Check if white noise is currently playing
+            frequency: buffer != nil ? Double(eqNode.bands[0].frequency) : nil,  // White noise frequency (optional)
+            volume: playerNode.volume,  // White noise volume
+            urlSounds: urlSounds,  // All URL-based sounds and their volumes
+            eqFrequency: eqNode.bands[0].frequency  // EQ frequency (can be adjusted)
+        )
+
+        return preset
+    }
+
+    public func loadSoundFromPreset(_ preset: SoundPreset) {
+        // Stop any currently playing sounds
+        stop()
+
+        // Regenerate the white noise if it was playing
+        if preset.isWhiteNoise, let frequency = preset.frequency {
+            setFrequency(frequency: frequency, amplitudes: [1.0])
+            playerNode.volume = preset.volume
+        }
+
+        // Regenerate all URL sounds
+        for urlSound in preset.urlSounds {
+            playSoundFromURL(from: urlSound.url)
+            setVolumeForURL(from: urlSound.url, amplitude: urlSound.volume)
+        }
+
+        // Apply the EQ settings
+        eqNode.bands[0].frequency = preset.eqFrequency
+    }
+
+
+//     public func performFFT() -> [Float] {
+//         guard let buffer = self.buffer, let floatChannelData = buffer.floatChannelData else {
+//             fatalError("Buffer or floatChannelData is nil")
+//         }
+
+//         let frameLength = Int(buffer.frameLength)
+        
+//         guard frameLength.isPowerOf2 else {
+//             fatalError("Frame length must be a power of 2")
+//         }
+        
+//         let log2n = UInt(log2(Double(frameLength)))
+//         guard let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
+//             fatalError("FFT setup failed")
+//         }
+
+//         var realp = [Float](repeating: 0.0, count: frameLength / 2)
+//         var imagp = [Float](repeating: 0.0, count: frameLength / 2)
+
+//         var complexBuffer = [DSPComplex](repeating: DSPComplex(real: 0.0, imag: 0.0), count: frameLength / 2)
+
+//         for i in 0..<frameLength / 2 {
+//             complexBuffer[i] = DSPComplex(real: floatChannelData[0][i * 2], imag: floatChannelData[0][i * 2 + 1])
+//         }
+
+//         var splitComplex = DSPSplitComplex(realp: &realp, imagp: &imagp)
+//         complexBuffer.withUnsafeBufferPointer { pointer in
+//             vDSP_ctoz(pointer.baseAddress!, 2, &splitComplex, 1, vDSP_Length(frameLength / 2))
+//         }
+
+//         vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
+
+//         var magnitudes = [Float](repeating: 0.0, count: frameLength / 2)
+//         vDSP_zvmags(&splitComplex, 1, &magnitudes, 1, vDSP_Length(frameLength / 2))
+
+//         vDSP_destroy_fftsetup(fftSetup)
+
+//         return magnitudes.map { sqrt($0) }
+//     }
 }
 
 public struct ADSR {
@@ -300,16 +478,21 @@ public class ToneGeneratorModule: Module {
             toneGenerator.playWhiteNoise()
         }
 
+        AsyncFunction("pause") { () in
+            toneGenerator.pause()
+        }
+
         AsyncFunction("adjustFrequency") { (frequency: Float) in
             toneGenerator.adjustFrequency(frequency: frequency)
         }
 
-        AsyncFunction("stop") { () in
-            toneGenerator.stop()
+
+        AsyncFunction("adjustWhiteNoiseVolume") { (volume: Float) in
+            toneGenerator.adjustWhiteNoiseVolume(volume: volume)
         }
 
-        AsyncFunction("setWhiteNoiseAmplitude") { (amplitude: Float) in
-            toneGenerator.setWhiteNoiseAmplitude(amplitude: amplitude)
+        AsyncFunction("stop") { () in
+            toneGenerator.stop()
         }
 
         AsyncFunction("playSoundFromURL") { (url: URL) in
@@ -323,6 +506,52 @@ public class ToneGeneratorModule: Module {
         AsyncFunction("setVolumeForURL") { (url: URL, amplitude: Float) in
             toneGenerator.setVolumeForURL(from: url, amplitude: amplitude)
         }
+
+        AsyncFunction("adjustMasterVolume") { (volume: Float) in
+            toneGenerator.adjustMasterVolume(volume: volume)
+        }
+
+        AsyncFunction("checkIfSoundLibraryIsPlaying") { () in
+            return toneGenerator.checkIfSoundLibraryIsPlaying()
+        }
+
+        AsyncFunction("saveSoundToFile") { () -> URL? in
+            return toneGenerator.saveSoundToFile()
+        }
+
+        // Expose function to save current sound preset
+        AsyncFunction("saveCurrentSoundPreset") { () -> [String: Any] in
+            let preset = toneGenerator.saveCurrentSoundPreset()
+            // Convert SoundPreset to a dictionary to send to JavaScript
+            return [
+                "isWhiteNoise": preset.isWhiteNoise,
+                "frequency": preset.frequency as Any,
+                "volume": preset.volume,
+                "urlSounds": preset.urlSounds.map { ["url": $0.url.absoluteString, "volume": $0.volume] },
+                "eqFrequency": preset.eqFrequency,
+            ]
+        }
+
+        AsyncFunction("loadSoundFromPreset") { (preset: [String: Any]) in
+            // Convert the dictionary from JavaScript back to the Swift ToneGenerator.SoundPreset structure
+            let urlSounds: [ToneGenerator.URLSound] = (preset["urlSounds"] as! [[String: Any]]).map {
+                ToneGenerator.URLSound(url: URL(string: $0["url"] as! String)!, volume: $0["volume"] as! Float)
+            }
+
+            let soundPreset = ToneGenerator.SoundPreset(
+                isWhiteNoise: preset["isWhiteNoise"] as! Bool,
+                frequency: preset["frequency"] as? Double,
+                volume: preset["volume"] as! Float,
+                urlSounds: urlSounds,
+                eqFrequency: preset["eqFrequency"] as! Float
+            )
+
+            toneGenerator.loadSoundFromPreset(soundPreset)
+        }
+
+        // AsyncFunction("playSoundFromFile") { (url: URL) -> Void? in
+        //     return toneGenerator.playSoundFromFile(from: url) // Use `from`
+        // }
 
         // AsyncFunction("performFFT") { () in 
         //     toneGenerator.performFFT() 
